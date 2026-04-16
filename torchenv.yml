@@ -1,0 +1,19 @@
+name: torchenv
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python
+  - pytorch
+  - torchvision
+  - torchaudio
+  - cpuonly
+  - ca-certificates
+  - openssl
+  - ipykernel
+  - certifi
+  - pandas
+  - matplotlib
+  - scikit-learn
+  - conda
+  - dataretrieval
