@@ -1,0 +1,88 @@
+import os
+import sys
+import pandas as pd
+import datetime as dt
+from dataretrieval import nwis
+from dataretrieval import waterdata
+import numpy as np
+import requests
+import io
+
+def discharge(ID, start, end):
+    url = "https://api.waterdata.usgs.gov/ogcapi/v0/collections/daily/items"
+    params = {
+        "f": "json",
+        "monitoring_location_id": f'USGS-{ID}',
+        "parameter_code": "00060",
+        "statistic_id": "00003",
+        "time": f"{start}T00:00:00Z/{end}T23:59:59Z",
+        "limit": 10000,
+    }
+    r = requests.get(url, params=params, timeout=60)
+    r.raise_for_status()
+    payload = r.json()
+    rows = []
+    for feat in payload.get("features", []):
+        props = feat.get("properties", {})
+        rows.append({
+            "date": pd.to_datetime(props.get("time")).normalize(),
+            f"{ID}_discharge_cfs": pd.to_numeric(props.get("value"), errors="coerce"),
+        })
+    df = pd.DataFrame(rows).dropna(subset=["date"]).sort_values("date")
+    df.to_csv(f'./Data Files/Streamflow/{ID}_discharge.csv', index=False)
+    return df.drop_duplicates("date").reset_index(drop=True)
+
+def daymet(ID,lat, lon, years):
+    url = "https://daymet.ornl.gov/single-pixel/api/data"
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "vars": "prcp,tmax,tmin",
+        "years":years
+    }
+    r = requests.get(url, params=params, timeout=60)
+    r.raise_for_status()
+    text = r.text.splitlines()
+    start_idx = None
+    for i, line in enumerate(text):
+        if line.lower().startswith("year,"):
+            start_idx = i
+            break
+    if start_idx is None:
+        data = pd.read_csv(io.StringIO(r.text))
+    else:
+        data = pd.read_csv(io.StringIO("\n".join(text[start_idx:])))
+    data.to_csv(f'./Data Files/Rain_Temp/{ID}_daymet.csv', index=False)
+    return data
+
+def normalize_daymet(df):
+    cols = {c.lower(): c for c in df.columns}
+    out = df.copy()
+    out["Date"] = pd.to_datetime(out[cols["year"]].astype(int).astype(str)) + pd.to_timedelta(out[cols["yday"]].astype(int) - 1, unit="D")
+    rename_map = {}
+    for key in ["prcp (mm/day)", "tmax (deg c)", "tmin (deg c)"]:
+        if key in cols:
+            rename_map[cols[key]] = key
+    out = out.rename(columns=rename_map)
+    keep = ["Date"] + [c for c in ["prcp (mm/day)", "tmax (deg c)", "tmin (deg c)"] if c in out.columns]
+    
+    return out[keep].sort_values("Date").reset_index(drop=True)
+
+def swe_set(stations,ID):
+    full_set = pd.DataFrame()
+    for site in stations:
+        df = pd.read_csv(f'./Data Files/SWE/df_{site}_UT_SNTL_UT_SNTL.csv',usecols=['Date','Snow Water Equivalent (m) Start of Day Values'])
+        df = df.rename(columns={"Snow Water Equivalent (m) Start of Day Values":f'{site}_SWE (m)'})
+        df["Date"] = pd.to_datetime(df["Date"])
+        df.set_index('Date',inplace=True)
+        full_set = pd.concat([full_set,df],join = 'outer',axis=1)
+    full_set.to_csv(f'./Data Files/SWE/{ID}_full_SWE.csv', index=False)
+    return full_set
+
+def full_data(daymet, swe, ID):
+    daymet['Date'] = pd.to_datetime(daymet['Date'])
+    daymet.set_index('Date', inplace=True)
+
+    training = pd.concat([daymet,swe],join='outer',ignore_index=False,axis=1)
+    training.to_csv(f'./Data Files/{ID}_combined.csv', index=False)
+    return training
