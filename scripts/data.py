@@ -25,12 +25,17 @@ def discharge(ID, start, end):
     for feat in payload.get("features", []):
         props = feat.get("properties", {})
         rows.append({
-            "date": pd.to_datetime(props.get("time")).normalize(),
-            f"{ID}_discharge_cfs": pd.to_numeric(props.get("value"), errors="coerce"),
+            "Date": pd.to_datetime(props.get("time")).normalize(),
+            "Discharge_cfs": pd.to_numeric(props.get("value"), errors="coerce"),
         })
-    df = pd.DataFrame(rows).dropna(subset=["date"]).sort_values("date")
+    df = pd.DataFrame(rows).sort_values("Date")
+
+    #fill missing values with interpolate
+    df = df.set_index(df["Date"])
+    df = df.reindex(pd.date_range(start=start,end=end,freq="D"))
+    df = df.interpolate(method='linear', limit_direction='both').ffill().bfill()
     df.to_csv(f'./Data Files/Streamflow/{ID}_discharge.csv', index=False)
-    return df.drop_duplicates("date").reset_index(drop=True)
+    return df.drop_duplicates("Date").reset_index(drop=True)
 
 def daymet(ID,lat, lon, years):
     url = "https://daymet.ornl.gov/single-pixel/api/data"
@@ -84,5 +89,5 @@ def full_data(daymet, swe, ID):
     daymet.set_index('Date', inplace=True)
 
     training = pd.concat([daymet,swe],join='outer',ignore_index=False,axis=1)
-    training.to_csv(f'./Data Files/{ID}_combined.csv', index=False)
+    training.to_csv(f'./Data Files/{ID}_combined.csv', index=True)
     return training
